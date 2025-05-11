@@ -1,8 +1,12 @@
-﻿using HtmlAgilityPack;
+﻿using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml;
-using System.Drawing;
+
+using HtmlAgilityPack;
+
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 namespace PrintableManga;
 
@@ -18,11 +22,11 @@ internal class Program
 
         if (finalOutputFolder != null)
         {
-            var templateDest = Path.Combine(finalOutputFolder, "Printer Comic Template.docx");
+            var templateDest = Path.Combine(finalOutputFolder, "Result.docx");
 
             File.Copy(mangaTemplatePath, templateDest, true);
 
-            GenerateMangaDoc(finalOutputFolder, templateDest);
+            GenerateMangaDoc(templateDest);
         }
     }
 
@@ -105,121 +109,75 @@ internal class Program
     }
 
 
-    static void GenerateMangaDoc(string finalOutputFolder, string templatePath)
+    static void GenerateMangaDoc(string templatePath)
     {
-        // Get all PNG files in the final output folder
-        var imageFiles = Directory.GetFiles(finalOutputFolder, "*.png");
-
-        if (!imageFiles.Any())
+        using (var document = WordprocessingDocument.Open(templatePath, true))
         {
-            Console.WriteLine("No images found to add to the document.");
-            return;
+            var elementsBody = document.MainDocumentPart!.Document.Body;
+
+            var table = elementsBody!.Elements<Table>().ElementAt(0);
+            var tableRow = table.Elements<TableRow>().ElementAt(0);
+            
+            var mainPart = document.MainDocumentPart;
+
+            AddImageToCell(mainPart, tableRow.Elements<TableCell>().ElementAt(0), @"E:\OnePiece Manga\one-piece-chapter-1148\Onepiece_1148_t_001.png");
+            AddImageToCell(mainPart, tableRow.Elements<TableCell>().ElementAt(1), @"E:\OnePiece Manga\one-piece-chapter-1148\Onepiece_1148_t_002.png");
+
+            document.Save();
         }
-
-        // Open the DOCX template
-        using (var wordDoc = WordprocessingDocument.Open(templatePath, true))
-        {
-            var mainPart = wordDoc.MainDocumentPart;
-            if (mainPart == null)
-            {
-                Console.WriteLine("MainDocumentPart not found in the template.");
-                return;
-            }
-
-            var table = mainPart.Document.Body.Elements<Table>().FirstOrDefault();
-            if (table == null)
-            {
-                Console.WriteLine("No table found in the document.");
-                return;
-            }
-
-            // Add images to the table cells
-            int imageIndex = 0;
-            foreach (var row in table.Elements<TableRow>())
-            {
-                var cells = row.Elements<TableCell>().ToList();
-
-                for (int i = 0; i < cells.Count && imageIndex < imageFiles.Length; i++)
-                {
-                    var cell = cells[i];
-                    var imagePath = imageFiles[imageIndex];
-
-                    AddImageToCell(mainPart, cell, imagePath, $"Image{imageIndex + 1}");
-                    imageIndex++;
-                }
-
-                if (imageIndex >= imageFiles.Length)
-                    break;
-            }
-
-            mainPart.Document.Save();
-        }
-
-        Console.WriteLine("Images added to the document successfully.");
     }
 
-    static void AddImageToCell(MainDocumentPart mainPart, TableCell cell, string imagePath, string imageId)
+    private static void AddImageToCell(MainDocumentPart mainPart, TableCell cell, string imagePath)
     {
-        // Add the image to the Word document
         var imagePart = mainPart.AddImagePart(ImagePartType.Png);
+
         using (var stream = new FileStream(imagePath, FileMode.Open))
         {
             imagePart.FeedData(stream);
         }
 
-        // Get image dimensions
-        using (var img = Image.FromFile(imagePath))
-        {
-            var widthInEmus = (long)(img.Width * 9525); // Convert pixels to EMUs
-            var heightInEmus = (long)(img.Height * 9525);
+        var relationshipId = mainPart.GetIdOfPart(imagePart);
+        var imageModel = ImageModel.FromPath(imagePath);
 
-            var gpxData = new DocumentFormat.OpenXml.Drawing.GraphicData(
-                            new DocumentFormat.OpenXml.Drawing.Pictures.Picture(
-                                new DocumentFormat.OpenXml.Drawing.Pictures.NonVisualPictureProperties(
-                                    new DocumentFormat.OpenXml.Drawing.Pictures.NonVisualDrawingProperties
-                                    {
-                                        Id = (UInt32Value)0U,
-                                        Name = imageId
-                                    },
-                                    new DocumentFormat.OpenXml.Drawing.Pictures.NonVisualPictureDrawingProperties()),
-                                new DocumentFormat.OpenXml.Drawing.Pictures.BlipFill(
-                                    new DocumentFormat.OpenXml.Drawing.Blip
-                                    {
-                                        Embed = mainPart.GetIdOfPart(imagePart),
-                                        CompressionState = DocumentFormat.OpenXml.Drawing.BlipCompressionValues.Print
-                                    },
-                                    new DocumentFormat.OpenXml.Drawing.Stretch(
-                                        new DocumentFormat.OpenXml.Drawing.FillRectangle())),
-                                new DocumentFormat.OpenXml.Drawing.Pictures.ShapeProperties(
-                                    new DocumentFormat.OpenXml.Drawing.Transform2D(
-                                        new DocumentFormat.OpenXml.Drawing.Offset { X = 0L, Y = 0L },
-                                        new DocumentFormat.OpenXml.Drawing.Extents { Cx = widthInEmus, Cy = heightInEmus }),
-                                    new DocumentFormat.OpenXml.Drawing.PresetGeometry(
-                                        new DocumentFormat.OpenXml.Drawing.AdjustValueList())
-                                    { Preset = DocumentFormat.OpenXml.Drawing.ShapeTypeValues.Rectangle })));
+        var element = new Drawing(
+          new DW.Inline(
+              new DW.Extent()
+              {
+                  Cx = imageModel.WidthInEmus / 2,
+                  Cy = imageModel.HeightInEmus / 2
+              },
+              new DW.EffectExtent() { LeftEdge = 0L, TopEdge = 0L, RightEdge = 0L, BottomEdge = 0L },
+              new DW.DocProperties() { Id = 2U, Name = "Picture 1" },
+              new DW.NonVisualGraphicFrameDrawingProperties(new A.GraphicFrameLocks() { NoChangeAspect = true, NoResize = false, NoSelection = false }),
+              new A.Graphic(new A.GraphicData(new PIC.Picture
+                        (
+                          new PIC.NonVisualPictureProperties(
+                              new PIC.NonVisualDrawingProperties()
+                              {
+                                  Id = 1U,
+                                  Name = "image.png"
+                              },
+                              new PIC.NonVisualPictureDrawingProperties()),
+                          new PIC.BlipFill(
+                              new A.Blip(
+                                  new A.BlipExtensionList(
+                                      new A.BlipExtension()
+                                      {
+                                          Uri = "{28A0092B-C50C-407E-A947-70E740481C1C}"
+                                      }))
+                              {
+                                  Embed = relationshipId,
+                                  CompressionState = A.BlipCompressionValues.Print
+                              },
+                              new A.Stretch(new A.FillRectangle())),
+                          new PIC.ShapeProperties(
+                              new A.Transform2D(new A.Offset() { X = 0L, Y = 0L }, new A.Extents() { Cx = imageModel.WidthInEmus, Cy = imageModel.HeightInEmus }),
+                              new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle })
+                          ))
+              {
+                  Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+              })));
 
-            // Create the drawing element for the image
-            var element = new Drawing(
-                new DocumentFormat.OpenXml.Drawing.Wordprocessing.Inline(
-                    new DocumentFormat.OpenXml.Drawing.Wordprocessing.Extent { Cx = widthInEmus, Cy = heightInEmus },
-                    new DocumentFormat.OpenXml.Drawing.Wordprocessing.EffectExtent
-                    {
-                        LeftEdge = 0L,
-                        TopEdge = 0L,
-                        RightEdge = 0L,
-                        BottomEdge = 0L
-                    },
-                    new DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties
-                    {
-                        Id = (UInt32Value)1U,
-                        Name = imageId
-                    },
-                    new DocumentFormat.OpenXml.Drawing.Graphic(gpxData))
-            );
-
-            // Add the image to the cell
-            var paragraph = new Paragraph(new Run(element));
-            cell.Append(paragraph);
-        }        
+        cell.Append(new Paragraph(new Run(element)));
     }
 }
