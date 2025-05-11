@@ -4,9 +4,10 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 using HtmlAgilityPack;
 
-using A = DocumentFormat.OpenXml.Drawing;
-using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
-using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
+using OpenDrawing = DocumentFormat.OpenXml.Drawing;
+using WordProc = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using DrawingPic = DocumentFormat.OpenXml.Drawing.Pictures;
+using System.Drawing;
 
 namespace PrintableManga;
 
@@ -26,7 +27,7 @@ internal class Program
 
             File.Copy(mangaTemplatePath, templateDest, true);
 
-            GenerateMangaDoc(templateDest);
+            GenerateMangaDoc(finalOutputFolder, templateDest);
         }
     }
 
@@ -109,26 +110,55 @@ internal class Program
     }
 
 
-    static void GenerateMangaDoc(string templatePath)
+    static void GenerateMangaDoc(string finalOutputFolder, string templatePath)
     {
         using (var document = WordprocessingDocument.Open(templatePath, true))
         {
             var elementsBody = document.MainDocumentPart!.Document.Body;
 
-            var table = elementsBody!.Elements<Table>().ElementAt(0);
-            var tableRow = table.Elements<TableRow>().ElementAt(0);
-            
+            var table = elementsBody!.Elements<Table>().First();
+
             var mainPart = document.MainDocumentPart;
 
-            AddImageToCell(mainPart, tableRow.Elements<TableCell>().ElementAt(0), @"E:\OnePiece Manga\one-piece-chapter-1148\Onepiece_1148_t_001.png");
-            AddImageToCell(mainPart, tableRow.Elements<TableCell>().ElementAt(1), @"E:\OnePiece Manga\one-piece-chapter-1148\Onepiece_1148_t_002.png");
+            var imageFiles = Directory.GetFiles(finalOutputFolder, "*.png");
 
+            if (!imageFiles.Any())
+            {
+                Console.WriteLine("No images found to add to the document.");
+                return;
+            }
+
+            var ix = 0;
+            foreach (var cell in GetCells(table).Skip(1))
+            {
+                AddImageToCell(mainPart, cell, imageFiles[ix]);
+
+                ix++;
+
+                if (ix >= imageFiles.Length)
+                {
+                    break;
+                }
+            }
+          
             document.Save();
+        }
+    }
+
+    static IEnumerable<TableCell> GetCells(Table table)
+    {
+        foreach (var row in table.Elements<TableRow>())
+        {
+            foreach (var cell in row.Elements<TableCell>())
+            {
+                yield return cell;
+            }
         }
     }
 
     private static void AddImageToCell(MainDocumentPart mainPart, TableCell cell, string imagePath)
     {
+        var imageModel = ImageModel.FromPath(imagePath, maxHeightInInches: 14);
         var imagePart = mainPart.AddImagePart(ImagePartType.Png);
 
         using (var stream = new FileStream(imagePath, FileMode.Open))
@@ -137,47 +167,95 @@ internal class Program
         }
 
         var relationshipId = mainPart.GetIdOfPart(imagePart);
-        var imageModel = ImageModel.FromPath(imagePath);
 
-        var element = new Drawing(
-          new DW.Inline(
-              new DW.Extent()
-              {
-                  Cx = imageModel.WidthInEmus / 2,
-                  Cy = imageModel.HeightInEmus / 2
-              },
-              new DW.EffectExtent() { LeftEdge = 0L, TopEdge = 0L, RightEdge = 0L, BottomEdge = 0L },
-              new DW.DocProperties() { Id = 2U, Name = "Picture 1" },
-              new DW.NonVisualGraphicFrameDrawingProperties(new A.GraphicFrameLocks() { NoChangeAspect = true, NoResize = false, NoSelection = false }),
-              new A.Graphic(new A.GraphicData(new PIC.Picture
+        var element = new Drawing
+            (
+                new WordProc.Inline
+                (
+                    new WordProc.Extent
+                    {
+                        Cx = imageModel.WidthInEmus / 2,
+                        Cy = imageModel.HeightInEmus / 2
+                    },
+                    new WordProc.EffectExtent() { LeftEdge = 0L, TopEdge = 0L, RightEdge = 0L, BottomEdge = 0L },
+                    new WordProc.DocProperties() { Id = 2U, Name = "Picture 1" },
+                    new WordProc.NonVisualGraphicFrameDrawingProperties(new OpenDrawing.GraphicFrameLocks() { NoChangeAspect = true, NoResize = false, NoSelection = false }),
+                    new OpenDrawing.Graphic(new OpenDrawing.GraphicData(new DrawingPic.Picture
                         (
-                          new PIC.NonVisualPictureProperties(
-                              new PIC.NonVisualDrawingProperties()
-                              {
-                                  Id = 1U,
-                                  Name = "image.png"
-                              },
-                              new PIC.NonVisualPictureDrawingProperties()),
-                          new PIC.BlipFill(
-                              new A.Blip(
-                                  new A.BlipExtensionList(
-                                      new A.BlipExtension()
-                                      {
-                                          Uri = "{28A0092B-C50C-407E-A947-70E740481C1C}"
-                                      }))
-                              {
-                                  Embed = relationshipId,
-                                  CompressionState = A.BlipCompressionValues.Print
-                              },
-                              new A.Stretch(new A.FillRectangle())),
-                          new PIC.ShapeProperties(
-                              new A.Transform2D(new A.Offset() { X = 0L, Y = 0L }, new A.Extents() { Cx = imageModel.WidthInEmus, Cy = imageModel.HeightInEmus }),
-                              new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle })
-                          ))
-              {
-                  Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture"
-              })));
+                            new DrawingPic.NonVisualPictureProperties(
+                                new DrawingPic.NonVisualDrawingProperties
+                                {
+                                    Id = 1U,
+                                    Name = "image.png"
+                                },
+                                new DrawingPic.NonVisualPictureDrawingProperties()),
+                            new DrawingPic.BlipFill(
+                                new OpenDrawing.Blip
+                                {
+                                    Embed = relationshipId,
+                                    CompressionState = OpenDrawing.BlipCompressionValues.Print
+                                },
+                                new OpenDrawing.Stretch(new OpenDrawing.FillRectangle())),
+                            new DrawingPic.ShapeProperties(
+                                new OpenDrawing.Transform2D(new OpenDrawing.Offset() { X = 0L, Y = 0L }, new OpenDrawing.Extents() { Cx = imageModel.WidthInEmus, Cy = imageModel.HeightInEmus }),
+                                new OpenDrawing.PresetGeometry(new OpenDrawing.AdjustValueList()) { Preset = OpenDrawing.ShapeTypeValues.Rectangle })
+                        ))
+                    {
+                        Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+                    })
+                )
+            );
 
-        cell.Append(new Paragraph(new Run(element)));
+        var paragraph = new Paragraph(
+            new ParagraphProperties(new Justification()
+            {
+                Val = JustificationValues.Center  // Right-align the content
+            }),
+            new Run(element));
+
+        cell.Append(paragraph);
+    }
+}
+
+public class ImageModel
+{
+    public long WidthInEmus { get; set; }
+    public long HeightInEmus { get; set; }
+
+    public static ImageModel FromPath(string path, double? maxHeightInInches = null)
+    {
+        var result = new ImageModel();
+
+#pragma warning disable CA1416 // Validate platform compatibility
+        using (var img = Image.FromFile(path))
+        {
+            // Calculate EMUs considering image DPI
+            var hResolution = img.HorizontalResolution > 0 ? img.HorizontalResolution : 96;
+            var vResolution = img.VerticalResolution > 0 ? img.VerticalResolution : 96;
+
+            double originalWidthInInches = img.Width / hResolution;
+            double originalHeightInInches = img.Height / vResolution;
+
+            if (maxHeightInInches.HasValue)
+            {
+                // Scale dimensions to fit within maxHeightInInches while maintaining aspect ratio
+                double scaleFactor = maxHeightInInches.Value / originalHeightInInches;
+
+                double adjustedHeightInInches = maxHeightInInches.Value;
+                double adjustedWidthInInches = originalWidthInInches * scaleFactor;
+
+                result.WidthInEmus = (long)(adjustedWidthInInches * 914400);
+                result.HeightInEmus = (long)(adjustedHeightInInches * 914400);
+            }
+            else
+            {
+                // Use original dimensions if no maxHeightInInches is provided
+                result.WidthInEmus = (long)(originalWidthInInches * 914400);
+                result.HeightInEmus = (long)(originalHeightInInches * 914400);
+            }
+        }
+#pragma warning restore CA1416 // Validate platform compatibility
+
+        return result;
     }
 }
