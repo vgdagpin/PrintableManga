@@ -17,8 +17,8 @@ internal class Program
     static async Task Main(string[] args)
     {
         var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1000/";
-        var outputFolder = @"C:\Users\vince\OneDrive\OnePiece Manga";
-        var mangaTemplatePath = Path.Combine(outputFolder, "Printer Comic Template.docx");
+        var outputFolder = @"E:\OnePiece Manga";
+        var mangaTemplatePath = Path.Combine(outputFolder, "Printer Comic Template - Blank.docx");
 
         var finalOutputFolder = await DownloadImages(url, outputFolder, false);
 
@@ -28,7 +28,7 @@ internal class Program
 
             File.Copy(mangaTemplatePath, templateDest, true);
 
-            GenerateMangaDoc(finalOutputFolder, templateDest);
+            GenerateMangaDoc(finalOutputFolder, templateDest, maxHeightInInches: 14);
         }
     }
 
@@ -122,18 +122,16 @@ internal class Program
     }
 
 
-    static void GenerateMangaDoc(string finalOutputFolder, string templatePath)
+    static void GenerateMangaDoc(string finalOutputFolder, string templatePath, double? maxHeightInInches = null)
     {
         using (var document = WordprocessingDocument.Open(templatePath, true))
         {
-            var elementsBody = document.MainDocumentPart!.Document.Body;
-
-            var table = elementsBody!.Elements<Table>().First();
-
-            var mainPart = document.MainDocumentPart;
+            var mainPart = document.MainDocumentPart!;
+            var elementsBody = mainPart.Document.Body!;
 
             var imageFiles = Directory.GetFiles(finalOutputFolder, "*.*")
                                                   .Where(file => !file.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+                                                  .OrderBy(a => int.Parse(Path.GetFileNameWithoutExtension(a)))
                                                   .ToArray();
 
             if (!imageFiles.Any())
@@ -142,21 +140,101 @@ internal class Program
                 return;
             }
 
-            var ix = 0;
-            foreach (var cell in GetCells(table).Skip(1))
+            var cellQueue = new Queue<TableCell>();
+
+            for (int i = 0; i < imageFiles.Length; i++)
             {
-                AddImageToCell(mainPart, cell, imageFiles[ix]);
+                var image = imageFiles[i];
 
-                ix++;
+                var imageModel = ImageModel.FromPath(image, maxHeightInInches);
 
-                if (ix >= imageFiles.Length)
+                var imageElement = ImageToElement(mainPart, imageModel);
+
+                if (imageModel.IsHorizontal)
                 {
-                    break;
+                    elementsBody.Append(imageElement);
+
+                    cellQueue = null;
                 }
-            }
-          
+                else
+                {
+                    TableCell? cell;
+
+                    if (cellQueue == null)
+                    {
+                        cellQueue = new Queue<TableCell>();
+
+                        foreach (var eachCell in GetCells(CreateTable(elementsBody)))
+                        {
+                            cellQueue.Enqueue(eachCell);
+                        }
+                    }
+
+                    // if still has cell, use it
+                    // if not, create new table
+                    if (!cellQueue.TryDequeue(out cell))
+                    {
+                        cellQueue = new Queue<TableCell>();
+
+                        foreach (var eachCell in GetCells(CreateTable(elementsBody)))
+                        {
+                            cellQueue.Enqueue(eachCell);
+                        }
+
+                        cell = cellQueue.Dequeue();
+                    }
+
+                    cell.Append(imageElement);
+
+                    // if this is the last image, and there's still a free cell
+                    // lets just fill it with the last image
+                    if (i == imageFiles.Length - 1 && cellQueue.TryDequeue(out cell))
+                    {
+                        cell.Append(ImageToElement(mainPart, imageModel));
+                    }
+                }
+            }            
+
             document.Save();
         }
+    }
+
+    static Table CreateTable(Body body)
+    {
+        // Create a new table
+        var table = new Table();
+
+        // Define table properties  
+        var tableProperties = new TableProperties(
+            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct }, // Set table width to 100%  
+            new TableBorders(
+                new TopBorder { Val = BorderValues.Single, Size = 4 },
+                new BottomBorder { Val = BorderValues.Single, Size = 4 },
+                new LeftBorder { Val = BorderValues.Single, Size = 4 },
+                new RightBorder { Val = BorderValues.Single, Size = 4 },
+                new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
+                new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 }
+            )
+        );
+
+        table.AppendChild(tableProperties);
+
+        // Create a single row
+        var tableRow = new TableRow();
+
+        // Create two cells for the row
+        var cell1 = new TableCell(new Paragraph());
+        var cell2 = new TableCell(new Paragraph());
+
+        // Add cells to the row
+        tableRow.Append(cell1, cell2);
+
+        // Add the row to the table
+        table.AppendChild(tableRow);
+
+        body.Append(table);
+
+        return table;
     }
 
     static IEnumerable<TableCell> GetCells(Table table)
@@ -170,12 +248,11 @@ internal class Program
         }
     }
 
-    private static void AddImageToCell(MainDocumentPart mainPart, TableCell cell, string imagePath)
+    private static Paragraph ImageToElement(MainDocumentPart mainPart, ImageModel imageModel)
     {
-        var imageModel = ImageModel.FromPath(imagePath, maxHeightInInches: 14);
         var imagePart = mainPart.AddImagePart(ImagePartType.Png);
 
-        using (var stream = new FileStream(imagePath, FileMode.Open))
+        using (var stream = new FileStream(imageModel.Path, FileMode.Open))
         {
             imagePart.FeedData(stream);
         }
@@ -220,14 +297,12 @@ internal class Program
                 )
             );
 
-        var paragraph = new Paragraph(
+        return new Paragraph(
             new ParagraphProperties(new Justification()
             {
                 Val = JustificationValues.Center  // Right-align the content
             }),
             new Run(element));
-
-        cell.Append(paragraph);
     }
 }
 
@@ -236,9 +311,19 @@ public class ImageModel
     public long WidthInEmus { get; set; }
     public long HeightInEmus { get; set; }
 
+    public double WidthInInches { get; set; }
+    public double HeightInInches { get; set; }
+
+    public bool IsHorizontal => WidthInInches > HeightInInches;
+
+    public string Path { get; set; } = null!;
+
     public static ImageModel FromPath(string path, double? maxHeightInInches = null)
     {
-        var result = new ImageModel();
+        var result = new ImageModel
+        {
+            Path = path
+        };
 
 #pragma warning disable CA1416 // Validate platform compatibility
         using (var img = Image.FromFile(path))
@@ -247,26 +332,21 @@ public class ImageModel
             var hResolution = img.HorizontalResolution > 0 ? img.HorizontalResolution : 96;
             var vResolution = img.VerticalResolution > 0 ? img.VerticalResolution : 96;
 
-            double originalWidthInInches = img.Width / hResolution;
-            double originalHeightInInches = img.Height / vResolution;
+            result.WidthInInches = img.Width / hResolution;
+            result.HeightInInches = img.Height / vResolution;
 
             if (maxHeightInInches.HasValue)
             {
                 // Scale dimensions to fit within maxHeightInInches while maintaining aspect ratio
-                double scaleFactor = maxHeightInInches.Value / originalHeightInInches;
+                double scaleFactor = maxHeightInInches.Value / result.HeightInInches;
 
-                double adjustedHeightInInches = maxHeightInInches.Value;
-                double adjustedWidthInInches = originalWidthInInches * scaleFactor;
+                result.HeightInInches = maxHeightInInches.Value;
+                result.WidthInInches = result.WidthInInches * scaleFactor;
+            }
 
-                result.WidthInEmus = (long)(adjustedWidthInInches * 914400);
-                result.HeightInEmus = (long)(adjustedHeightInInches * 914400);
-            }
-            else
-            {
-                // Use original dimensions if no maxHeightInInches is provided
-                result.WidthInEmus = (long)(originalWidthInInches * 914400);
-                result.HeightInEmus = (long)(originalHeightInInches * 914400);
-            }
+            // Use original dimensions if no maxHeightInInches is provided
+            result.WidthInEmus = (long)(result.WidthInInches * 914400);
+            result.HeightInEmus = (long)(result.HeightInInches * 914400);
         }
 #pragma warning restore CA1416 // Validate platform compatibility
 
