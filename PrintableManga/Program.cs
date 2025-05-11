@@ -16,9 +16,8 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
-        var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1000/";
+        var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1001/";
         var outputFolder = @"E:\OnePiece Manga";
-        var mangaTemplatePath = Path.Combine(outputFolder, "Printer Comic Template - Blank.docx");
 
         var finalOutputFolder = await DownloadImages(url, outputFolder, false);
 
@@ -26,7 +25,10 @@ internal class Program
         {
             var templateDest = Path.Combine(finalOutputFolder, "Result.docx");
 
-            File.Copy(mangaTemplatePath, templateDest, true);
+            if (File.Exists(templateDest))
+            {
+                File.Delete(templateDest);
+            }
 
             GenerateMangaDoc(finalOutputFolder, templateDest, maxHeightInInches: 14);
         }
@@ -124,9 +126,27 @@ internal class Program
 
     static void GenerateMangaDoc(string finalOutputFolder, string templatePath, double? maxHeightInInches = null)
     {
-        using (var document = WordprocessingDocument.Open(templatePath, true))
+        using (var document = WordprocessingDocument.Create(templatePath, WordprocessingDocumentType.Document))
         {
-            var mainPart = document.MainDocumentPart!;
+            var mainPart = document.AddMainDocumentPart();
+            mainPart.Document = new Document(new Body(new SectionProperties(
+                new PageSize
+                {
+                    Width = 16838, // A4 width in twentieths of a point (11906 for portrait, 16838 for landscape)
+                    Height = 11906, // A4 height in twentieths of a point (16838 for portrait, 11906 for landscape)
+                    Orient = PageOrientationValues.Landscape
+                },
+                new PageMargin
+                {
+                    Top = 360, // 0.25 inch
+                    Bottom = 360, // 0.25 inch
+                    Left = 360, // 0.25 inch
+                    Right = 360 // 0.25 inch
+                }
+            )));
+
+            document.Save();
+
             var elementsBody = mainPart.Document.Body!;
 
             var imageFiles = Directory.GetFiles(finalOutputFolder, "*.*")
