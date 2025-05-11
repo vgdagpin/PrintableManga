@@ -8,6 +8,7 @@ using OpenDrawing = DocumentFormat.OpenXml.Drawing;
 using WordProc = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using DrawingPic = DocumentFormat.OpenXml.Drawing.Pictures;
 using System.Drawing;
+using System.Text.RegularExpressions;
 
 namespace PrintableManga;
 
@@ -15,8 +16,8 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
-        var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1148/";
-        var outputFolder = @"E:\OnePiece Manga";
+        var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1000/";
+        var outputFolder = @"C:\Users\vince\OneDrive\OnePiece Manga";
         var mangaTemplatePath = Path.Combine(outputFolder, "Printer Comic Template.docx");
 
         var finalOutputFolder = await DownloadImages(url, outputFolder, false);
@@ -31,9 +32,9 @@ internal class Program
         }
     }
 
-    static async Task<string?> DownloadImages(string url, string outputFolder, bool deleteIfExists)
+    static string PrepareDirectory(string url, string outputFolder, bool deleteIfExists)
     {
-        var chapter = url.Trim('/').Split('/').Last();
+        var chapter = Regex.Match(url.Trim('/').Split('/').Last(), @"\d+$").Value.PadLeft(4, '0');
 
         var finalOutputFolder = Path.Combine(outputFolder, chapter);
 
@@ -45,13 +46,24 @@ internal class Program
             }
             else
             {
-                // exit, means we already generated it
                 return finalOutputFolder;
             }
         }
 
         // Ensure the output folder exists
         Directory.CreateDirectory(finalOutputFolder);
+
+        return finalOutputFolder;
+    }
+
+    static async Task<string?> DownloadImages(string url, string outputFolder, bool deleteIfExists)
+    {
+        var finalOutputFolder = PrepareDirectory(url, outputFolder, deleteIfExists);
+
+        if (Directory.GetFiles(finalOutputFolder).Length > 1)
+        {
+            return finalOutputFolder;
+        }
 
         var web = new HtmlWeb();
         var doc = await web.LoadFromWebAsync(url);
@@ -72,7 +84,7 @@ internal class Program
         {
             Console.WriteLine("No images found.");
             return null;
-        }
+        }       
 
         using var httpClient = new HttpClient();
 
@@ -80,7 +92,7 @@ internal class Program
         {
             var imgSrc = imgNode.GetAttributeValue("src", string.Empty).Trim();
 
-            if (imgSrc != null && imgSrc.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(imgSrc))
             {
                 try
                 {
@@ -120,7 +132,9 @@ internal class Program
 
             var mainPart = document.MainDocumentPart;
 
-            var imageFiles = Directory.GetFiles(finalOutputFolder, "*.png");
+            var imageFiles = Directory.GetFiles(finalOutputFolder, "*.*")
+                                                  .Where(file => !file.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+                                                  .ToArray();
 
             if (!imageFiles.Any())
             {
