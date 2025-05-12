@@ -16,7 +16,7 @@ internal class Program
     {
         var outputFolder = @"E:\OnePiece Manga";
 
-        for (int chapter = 980; chapter <= 1148; chapter++)
+        for (int chapter = 900; chapter <= 979; chapter++)
         {
             var isColor = true;
             var url = $"https://ww11.readonepiece.com/chapter/one-piece-digital-colored-comics-chapter-{chapter}/";
