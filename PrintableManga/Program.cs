@@ -1,6 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
-using DocumentFormat.OpenXml;
+﻿using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 
@@ -18,18 +16,42 @@ internal class Program
     {
         var outputFolder = @"E:\OnePiece Manga";
 
-        for (int i = 1011; i <= 1148; i++)
+        for (int chapter = 980; chapter <= 1148; chapter++)
         {
-            var url = $"https://ww11.readonepiece.com/chapter/one-piece-digital-colored-comics-chapter-{i}/";
+            var isColor = true;
+            var url = $"https://ww11.readonepiece.com/chapter/one-piece-digital-colored-comics-chapter-{chapter}/";
+            var folderName = chapter.ToString().PadLeft(4, '0');
 
-            var folderName = i.ToString().PadLeft(4, '0') + " - Colorized";
             var downloadResult = await DownloadImages(url, outputFolder, folderName, false);
 
             if (!downloadResult.AllSuccess)
             {
-                url = $"https://ww11.readonepiece.com/chapter/one-piece-chapter-{i}/";
+                isColor = false;
+                url = $"https://ww11.readonepiece.com/chapter/one-piece-chapter-{chapter}/";
 
                 downloadResult = await DownloadImages(url, outputFolder, folderName, true);
+            }
+
+            if (downloadResult.AllSuccess)
+            {
+                if (isColor)
+                {
+                    var dest = downloadResult.FinalOutputFolder + " - 1";
+                    Directory.Move(downloadResult.FinalOutputFolder, dest);
+                    downloadResult.FinalOutputFolder = dest;
+                }
+                else
+                {
+                    var dest = downloadResult.FinalOutputFolder + " - 2";
+                    Directory.Move(downloadResult.FinalOutputFolder, dest);
+                    downloadResult.FinalOutputFolder = dest;
+                }                
+            }
+            else
+            {
+                var dest = downloadResult.FinalOutputFolder + " - 3";
+                Directory.Move(downloadResult.FinalOutputFolder, dest);
+                downloadResult.FinalOutputFolder = dest;
             }
 
             if (downloadResult.AllSuccess)
@@ -132,7 +154,7 @@ internal class Program
                 var imgModel = ImageModel.FromBytes(imageBytes, imgSrc);
 
                 // Save the image to the output folder
-                var fileName = GetFileName(imgModel, i);
+                var fileName = GetFileName(folderName, imgModel, i);
                 var filePath = Path.Combine(res.FinalOutputFolder, fileName);
 
                 await File.WriteAllBytesAsync(filePath, imageBytes);
@@ -155,9 +177,10 @@ internal class Program
         return res;
     }
 
-    static string GetFileName(ImageModel imageModel, int currentImgIx)
+    static string GetFileName(string folderName, ImageModel imageModel, int currentImgIx)
     {
-        return $"{currentImgIx + 1}.{imageModel.FileExtension}";
+        // 0901-02.jpg
+        return $"{folderName}-{(currentImgIx + 1).ToString().PadLeft(2, '0')}.{imageModel.FileExtension}";
     }
 
     static WordprocessingDocument CreateDocument(string templatePath)
