@@ -10,6 +10,8 @@
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.1" />
+    <PackageReference Include="Mime-Detective" Version="25.4.25" />
+    <PackageReference Include="Mime-Detective.Definitions.Condensed" Version="25.4.25" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.4" />
   </ItemGroup>
 

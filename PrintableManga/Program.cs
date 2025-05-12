@@ -1,14 +1,14 @@
-﻿using DocumentFormat.OpenXml;
+﻿using System.Text.RegularExpressions;
+
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 
 using HtmlAgilityPack;
 
+using DrawingPic = DocumentFormat.OpenXml.Drawing.Pictures;
 using OpenDrawing = DocumentFormat.OpenXml.Drawing;
 using WordProc = DocumentFormat.OpenXml.Drawing.Wordprocessing;
-using DrawingPic = DocumentFormat.OpenXml.Drawing.Pictures;
-using System.Drawing;
-using System.Text.RegularExpressions;
 
 namespace PrintableManga;
 
@@ -16,35 +16,49 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
-        var url = "https://ww11.readonepiece.com/chapter/one-piece-chapter-1001/";
         var outputFolder = @"E:\OnePiece Manga";
 
-        var finalOutputFolder = await DownloadImages(url, outputFolder, false);
-
-        if (finalOutputFolder != null)
+        for (int i = 1011; i <= 1148; i++)
         {
-            var templateDest = Path.Combine(finalOutputFolder, "Result.docx");
+            var url = $"https://ww11.readonepiece.com/chapter/one-piece-digital-colored-comics-chapter-{i}/";
 
-            if (File.Exists(templateDest))
+            var folderName = i.ToString().PadLeft(4, '0') + " - Colorized";
+            var downloadResult = await DownloadImages(url, outputFolder, folderName, false);
+
+            if (!downloadResult.AllSuccess)
             {
-                File.Delete(templateDest);
+                url = $"https://ww11.readonepiece.com/chapter/one-piece-chapter-{i}/";
+
+                downloadResult = await DownloadImages(url, outputFolder, folderName, true);
             }
 
-            GenerateMangaDoc(finalOutputFolder, templateDest, maxHeightInInches: 14);
+            if (downloadResult.AllSuccess)
+            {
+                //var templateDest = Path.Combine(downloadResult.FinalOutputFolder, "Result.docx");
+
+                //if (File.Exists(templateDest))
+                //{
+                //    File.Delete(templateDest);
+                //}
+
+                //GenerateMangaDoc(downloadResult.FinalOutputFolder, templateDest, maxHeightInInches: 14);
+            }
         }
+
+        //await DownloadImages(
+        //    $"https://ww11.readonepiece.com/chapter/one-piece-digital-colored-comics-chapter-1026/", 
+        //    outputFolder, true);
     }
 
-    static string PrepareDirectory(string url, string outputFolder, bool deleteIfExists)
+    static string PrepareDirectory(string url, string outputFolder, string folderName, bool deleteIfExists)
     {
-        var chapter = Regex.Match(url.Trim('/').Split('/').Last(), @"\d+$").Value.PadLeft(4, '0');
-
-        var finalOutputFolder = Path.Combine(outputFolder, chapter);
+        var finalOutputFolder = Path.Combine(outputFolder, folderName);
 
         if (Directory.Exists(finalOutputFolder))
         {
             if (deleteIfExists)
             {
-                Directory.Delete(finalOutputFolder);
+                Directory.Delete(finalOutputFolder, true);
             }
             else
             {
@@ -58,13 +72,22 @@ internal class Program
         return finalOutputFolder;
     }
 
-    static async Task<string?> DownloadImages(string url, string outputFolder, bool deleteIfExists)
+    static async Task<DownloadImagesResult> DownloadImages(string url, string outputFolder, string folderName, bool deleteIfExists)
     {
-        var finalOutputFolder = PrepareDirectory(url, outputFolder, deleteIfExists);
+        var finalOutputFolder = PrepareDirectory(url, outputFolder, folderName, deleteIfExists);
 
-        if (Directory.GetFiles(finalOutputFolder).Length > 1)
+        var res = new DownloadImagesResult
         {
-            return finalOutputFolder;
+            AllSuccess = true,
+            FinalOutputFolder = finalOutputFolder,
+            ImagesCount = Directory.GetFiles(finalOutputFolder).Length,
+        };
+
+        if (res.ImagesCount > 1)
+        {
+            res.AllSuccess = true;
+
+            return res;
         }
 
         var web = new HtmlWeb();
@@ -75,148 +98,168 @@ internal class Program
 
         if (container == null)
         {
+            res.AllSuccess = false;
             Console.WriteLine("Main container not found.");
-            return null;
+            return res;
         }
 
         // Select all img elements within the container
-        var imgNodes = container.SelectNodes(".//div/img");
+        var imgNodes = container.SelectNodes(".//div/img")?
+            .Select(a => a.GetAttributeValue("src", string.Empty).Trim())
+            .Where(a => !string.IsNullOrEmpty(a))
+            .ToArray() ?? Array.Empty<string>();
 
-        if (imgNodes == null || !imgNodes.Any())
+        if (!imgNodes.Any())
         {
+            res.AllSuccess = false;
             Console.WriteLine("No images found.");
-            return null;
+            return res;
         }       
 
         using var httpClient = new HttpClient();
 
-        foreach (var imgNode in imgNodes)
+        for (int i = 0; i < imgNodes.Length; i++)
         {
-            var imgSrc = imgNode.GetAttributeValue("src", string.Empty).Trim();
+            var imgSrc = imgNodes[i];
 
-            if (!string.IsNullOrEmpty(imgSrc))
+            try
             {
-                try
-                {
-                    Console.WriteLine($"Downloading: {imgSrc}");
+                Console.WriteLine($"Downloading: {imgSrc}");
 
-                    // Download the image
-                    var imageBytes = await httpClient.GetByteArrayAsync(imgSrc);
+                // Download the image
+                var imageBytes = await httpClient.GetByteArrayAsync(imgSrc);
 
-                    // Save the image to the output folder
-                    var fileName = Path.GetFileName(imgSrc);
-                    var filePath = Path.Combine(finalOutputFolder, fileName);
+                var imgModel = ImageModel.FromBytes(imageBytes, imgSrc);
 
-                    await File.WriteAllBytesAsync(filePath, imageBytes);
+                // Save the image to the output folder
+                var fileName = GetFileName(imgModel, i);
+                var filePath = Path.Combine(res.FinalOutputFolder, fileName);
 
-                    Console.WriteLine($"Saved: {filePath}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to download {imgSrc}: {ex.Message}");
-                }
+                await File.WriteAllBytesAsync(filePath, imageBytes);
+
+                Console.WriteLine($"Saved: {filePath}");
+
+                res.ImagesCount++;
+
+                res.AllSuccess &= true;
+            }
+            catch (Exception ex)
+            {
+                res.AllSuccess &= false;
+                Console.WriteLine($"Failed to download {imgSrc}: {ex.Message}");
             }
         }
 
         Console.WriteLine("Download complete.");
 
-        return finalOutputFolder;
+        return res;
     }
 
+    static string GetFileName(ImageModel imageModel, int currentImgIx)
+    {
+        return $"{currentImgIx + 1}.{imageModel.FileExtension}";
+    }
+
+    static WordprocessingDocument CreateDocument(string templatePath)
+    {
+        var document = WordprocessingDocument.Create(templatePath, WordprocessingDocumentType.Document);
+
+        var mainPart = document.AddMainDocumentPart();
+        mainPart.Document = new Document(new Body(new SectionProperties(
+            new PageSize
+            {
+                Width = 16838, // A4 width in twentieths of a point (11906 for portrait, 16838 for landscape)
+                Height = 11906, // A4 height in twentieths of a point (16838 for portrait, 11906 for landscape)
+                Orient = PageOrientationValues.Landscape
+            },
+            new PageMargin
+            {
+                Top = 360, // 0.25 inch
+                Bottom = 360, // 0.25 inch
+                Left = 360, // 0.25 inch
+                Right = 360 // 0.25 inch
+            }
+        )));
+
+        return document;
+    }
 
     static void GenerateMangaDoc(string finalOutputFolder, string templatePath, double? maxHeightInInches = null)
     {
-        using (var document = WordprocessingDocument.Create(templatePath, WordprocessingDocumentType.Document))
+        var imageFiles = Directory.GetFiles(finalOutputFolder, "*.*")
+                            .OrderBy(a => int.Parse(Path.GetFileNameWithoutExtension(a)))
+                            .ToArray();
+
+        if (!imageFiles.Any())
         {
-            var mainPart = document.AddMainDocumentPart();
-            mainPart.Document = new Document(new Body(new SectionProperties(
-                new PageSize
-                {
-                    Width = 16838, // A4 width in twentieths of a point (11906 for portrait, 16838 for landscape)
-                    Height = 11906, // A4 height in twentieths of a point (16838 for portrait, 11906 for landscape)
-                    Orient = PageOrientationValues.Landscape
-                },
-                new PageMargin
-                {
-                    Top = 360, // 0.25 inch
-                    Bottom = 360, // 0.25 inch
-                    Left = 360, // 0.25 inch
-                    Right = 360 // 0.25 inch
-                }
-            )));
-
-            document.Save();
-
-            var elementsBody = mainPart.Document.Body!;
-
-            var imageFiles = Directory.GetFiles(finalOutputFolder, "*.*")
-                                                  .Where(file => !file.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
-                                                  .OrderBy(a => int.Parse(Path.GetFileNameWithoutExtension(a)))
-                                                  .ToArray();
-
-            if (!imageFiles.Any())
-            {
-                Console.WriteLine("No images found to add to the document.");
-                return;
-            }
-
-            var cellQueue = new Queue<TableCell>();
-
-            for (int i = 0; i < imageFiles.Length; i++)
-            {
-                var image = imageFiles[i];
-
-                var imageModel = ImageModel.FromPath(image, maxHeightInInches);
-
-                var imageElement = ImageToElement(mainPart, imageModel);
-
-                if (imageModel.IsHorizontal)
-                {
-                    elementsBody.Append(imageElement);
-
-                    cellQueue = null;
-                }
-                else
-                {
-                    TableCell? cell;
-
-                    if (cellQueue == null)
-                    {
-                        cellQueue = new Queue<TableCell>();
-
-                        foreach (var eachCell in GetCells(CreateTable(elementsBody)))
-                        {
-                            cellQueue.Enqueue(eachCell);
-                        }
-                    }
-
-                    // if still has cell, use it
-                    // if not, create new table
-                    if (!cellQueue.TryDequeue(out cell))
-                    {
-                        cellQueue = new Queue<TableCell>();
-
-                        foreach (var eachCell in GetCells(CreateTable(elementsBody)))
-                        {
-                            cellQueue.Enqueue(eachCell);
-                        }
-
-                        cell = cellQueue.Dequeue();
-                    }
-
-                    cell.Append(imageElement);
-
-                    // if this is the last image, and there's still a free cell
-                    // lets just fill it with the last image
-                    if (i == imageFiles.Length - 1 && cellQueue.TryDequeue(out cell))
-                    {
-                        cell.Append(ImageToElement(mainPart, imageModel));
-                    }
-                }
-            }            
-
-            document.Save();
+            Console.WriteLine("No images found to add to the document.");
+            return;
         }
+
+        var document = CreateDocument(templatePath);
+
+        var mainPart = document.MainDocumentPart!;
+        var elementsBody = mainPart.Document.Body!;
+
+        var cellQueue = new Queue<TableCell>();
+
+        // loop all images, if its horizontal append it to the body
+        // if its vertical, create table with 1 row 2 columns and append it to the cell
+        for (int i = 0; i < imageFiles.Length; i++)
+        {
+            var image = imageFiles[i];
+
+            var imageModel = ImageModel.FromPath(image, maxHeightInInches);
+
+            var imageElement = ImageToElement(mainPart, imageModel);
+
+            if (imageModel.IsHorizontal)
+            {
+                elementsBody.Append(imageElement);
+
+                cellQueue = null;
+            }
+            else
+            {
+                TableCell? cell;
+
+                if (cellQueue == null)
+                {
+                    cellQueue = new Queue<TableCell>();
+
+                    foreach (var eachCell in GetCells(CreateTable(elementsBody)))
+                    {
+                        cellQueue.Enqueue(eachCell);
+                    }
+                }
+
+                // if still has cell, use it
+                // if not, create new table
+                if (!cellQueue.TryDequeue(out cell))
+                {
+                    cellQueue = new Queue<TableCell>();
+
+                    foreach (var eachCell in GetCells(CreateTable(elementsBody)))
+                    {
+                        cellQueue.Enqueue(eachCell);
+                    }
+
+                    cell = cellQueue.Dequeue();
+                }
+
+                cell.Append(imageElement);
+
+                // if this is the last image, and there's still a free cell
+                // lets just fill it with the last image
+                if (i == imageFiles.Length - 1 && cellQueue.TryDequeue(out cell))
+                {
+                    cell.Append(ImageToElement(mainPart, imageModel));
+                }
+            }
+        }
+
+        document.Save();
+        document.Dispose();
     }
 
     static Table CreateTable(Body body)
@@ -272,7 +315,7 @@ internal class Program
     {
         var imagePart = mainPart.AddImagePart(ImagePartType.Png);
 
-        using (var stream = new FileStream(imageModel.Path, FileMode.Open))
+        using (var stream = new FileStream(imageModel.Path!, FileMode.Open))
         {
             imagePart.FeedData(stream);
         }
@@ -323,53 +366,5 @@ internal class Program
                 Val = JustificationValues.Center  // Right-align the content
             }),
             new Run(element));
-    }
-}
-
-public class ImageModel
-{
-    public long WidthInEmus { get; set; }
-    public long HeightInEmus { get; set; }
-
-    public double WidthInInches { get; set; }
-    public double HeightInInches { get; set; }
-
-    public bool IsHorizontal => WidthInInches > HeightInInches;
-
-    public string Path { get; set; } = null!;
-
-    public static ImageModel FromPath(string path, double? maxHeightInInches = null)
-    {
-        var result = new ImageModel
-        {
-            Path = path
-        };
-
-#pragma warning disable CA1416 // Validate platform compatibility
-        using (var img = Image.FromFile(path))
-        {
-            // Calculate EMUs considering image DPI
-            var hResolution = img.HorizontalResolution > 0 ? img.HorizontalResolution : 96;
-            var vResolution = img.VerticalResolution > 0 ? img.VerticalResolution : 96;
-
-            result.WidthInInches = img.Width / hResolution;
-            result.HeightInInches = img.Height / vResolution;
-
-            if (maxHeightInInches.HasValue)
-            {
-                // Scale dimensions to fit within maxHeightInInches while maintaining aspect ratio
-                double scaleFactor = maxHeightInInches.Value / result.HeightInInches;
-
-                result.HeightInInches = maxHeightInInches.Value;
-                result.WidthInInches = result.WidthInInches * scaleFactor;
-            }
-
-            // Use original dimensions if no maxHeightInInches is provided
-            result.WidthInEmus = (long)(result.WidthInInches * 914400);
-            result.HeightInEmus = (long)(result.HeightInInches * 914400);
-        }
-#pragma warning restore CA1416 // Validate platform compatibility
-
-        return result;
     }
 }
